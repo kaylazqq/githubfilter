@@ -168,7 +168,7 @@ python scripts/sync.py ... --allow-bootstrap-over-existing-target
 
 1. 补充 `identity.mailmap` 和真实公司身份正则。
 2. 添加 CodeHub 目标仓并设置目标分支为专用镜像分支。
-3. 在能同时访问 GitHub 与内部 CodeHub 的 Linux self-hosted runner 上安装 Git、Git LFS、Python。
+3. 在能同时访问 GitHub 与内部 CodeHub 的 Linux self-hosted runner 上安装 Git、Git LFS、Python；Actions Runner 至少为 `v2.327.1`（工作流使用 Node.js 24 action）。
 4. 配置上述 Secrets；不要将 CodeHub 暴露给公网来迁就 GitHub 托管 runner。
 5. 先从 Actions 手工执行 `dry_run=true`，下载审计报告核对身份清单。
 6. 再手工执行一次真实同步，并验证目标分支和状态分支。
