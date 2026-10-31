@@ -50,6 +50,7 @@ class SyncIntegrationTest(unittest.TestCase):
         (self.source_work / "README.md").write_text("one\n", encoding="utf-8")
         run(["git", "-C", self.source_work, "add", "README.md"])
         self.commit("first", "Alice External", "alice@users.noreply.github.com")
+        run(["git", "-C", self.source_work, "branch", "release"])
         run(["git", "clone", "--bare", self.source_work, self.source_bare])
         run(["git", "init", "--bare", self.target_bare])
         self.mailmap.write_text(
@@ -75,8 +76,6 @@ class SyncIntegrationTest(unittest.TestCase):
         document = {
             "schemaVersion": 1,
             "defaults": {
-                "sourceBranch": "main",
-                "targetBranch": "mirror-main",
                 "mailmap": str(self.mailmap),
                 "lfs": "false",
                 "requireAtomicPush": True,
@@ -91,14 +90,31 @@ class SyncIntegrationTest(unittest.TestCase):
                     "enabled": True,
                     "sourceUrl": str(self.source_bare),
                     "targetUrl": str(self.target_bare),
-                    "stateBranch": "githubfilter-state/one",
+                    "branches": [
+                        {
+                            "id": "main",
+                            "sourceBranch": "main",
+                            "targetBranch": "mirror-main",
+                        },
+                        {
+                            "id": "release",
+                            "sourceBranch": "release",
+                            "targetBranch": "mirror-release",
+                        },
+                    ],
                 },
                 {
                     "id": "disabled-two",
                     "enabled": False,
                     "sourceUrl": str(self.source_bare),
                     "targetUrl": str(self.target_bare),
-                    "stateBranch": "githubfilter-state/two",
+                    "branches": [
+                        {
+                            "id": "main",
+                            "sourceBranch": "main",
+                            "targetBranch": "unused-main",
+                        }
+                    ],
                 },
             ],
         }
@@ -106,7 +122,7 @@ class SyncIntegrationTest(unittest.TestCase):
 
     def sync(self, *extra: str, check: bool = True):
         return run(
-            [sys.executable, SYNC, "--config", self.config, "--repository-id", "one", *extra],
+            [sys.executable, SYNC, "--config", self.config, "--task-id", "one.main", *extra],
             check=check,
         )
 
@@ -115,7 +131,59 @@ class SyncIntegrationTest(unittest.TestCase):
 
     def test_matrix_only_contains_enabled_tasks(self) -> None:
         result = run([sys.executable, SYNC, "--config", self.config, "--print-matrix"])
-        self.assertEqual({"repository_id": ["one"]}, json.loads(result.stdout))
+        self.assertEqual({"task_id": ["one.main", "one.release"]}, json.loads(result.stdout))
+
+    def test_repository_selection_expands_all_branches(self) -> None:
+        result = run(
+            [
+                sys.executable,
+                SYNC,
+                "--config",
+                self.config,
+                "--repository-id",
+                "one",
+                "--print-matrix",
+            ]
+        )
+        self.assertEqual({"task_id": ["one.main", "one.release"]}, json.loads(result.stdout))
+
+    def test_duplicate_target_branch_is_rejected(self) -> None:
+        document = json.loads(self.config.read_text(encoding="utf-8"))
+        document["repositories"][0]["branches"][1]["targetBranch"] = "mirror-main"
+        self.config.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+        result = run(
+            [sys.executable, SYNC, "--config", self.config, "--validate-config"],
+            check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("写入同一引用", result.stderr)
+
+    def test_second_source_target_branch_mapping(self) -> None:
+        result = run(
+            [
+                sys.executable,
+                SYNC,
+                "--config",
+                self.config,
+                "--task-id",
+                "one.release",
+            ]
+        )
+        self.assertIn("one.release=pushed", result.stdout)
+        release_tip = run(
+            ["git", "--git-dir", self.target_bare, "rev-parse", "refs/heads/mirror-release"]
+        ).stdout.strip()
+        state_tip = run(
+            [
+                "git",
+                "--git-dir",
+                self.target_bare,
+                "rev-parse",
+                "refs/heads/githubfilter-state/one/release",
+            ]
+        ).stdout.strip()
+        self.assertRegex(release_tip, r"^[0-9a-f]{40}$")
+        self.assertRegex(state_tip, r"^[0-9a-f]{40}$")
 
     def test_collect_identities(self) -> None:
         output = self.root / "identities.tsv"
@@ -138,7 +206,7 @@ class SyncIntegrationTest(unittest.TestCase):
 
     def test_initial_incremental_and_drift_guard(self) -> None:
         first = self.sync()
-        self.assertIn("one=pushed", first.stdout)
+        self.assertIn("one.main=pushed", first.stdout)
         first_tip = self.target_tip()
         author = run(
             ["git", "--git-dir", self.target_bare, "show", "-s", "--format=%an <%ae>|%cn <%ce>", first_tip]
@@ -148,7 +216,7 @@ class SyncIntegrationTest(unittest.TestCase):
             author,
         )
         unchanged = self.sync()
-        self.assertIn("one=unchanged", unchanged.stdout)
+        self.assertIn("one.main=unchanged", unchanged.stdout)
 
         with (self.source_work / "README.md").open("a", encoding="utf-8") as stream:
             stream.write("two\n")
@@ -156,7 +224,7 @@ class SyncIntegrationTest(unittest.TestCase):
         self.commit("second", "Alice External", "alice@users.noreply.github.com")
         run(["git", "-C", self.source_work, "push", str(self.source_bare), "main"])
         second = self.sync()
-        self.assertIn("one=pushed", second.stdout)
+        self.assertIn("one.main=pushed", second.stdout)
         second_tip = self.target_tip()
         self.assertNotEqual(first_tip, second_tip)
 
