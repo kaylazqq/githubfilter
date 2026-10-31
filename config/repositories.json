@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "sourceBranch": "main",
+    "targetBranch": "main",
+    "mailmap": "identity.mailmap",
+    "lfs": "auto",
+    "requireAtomicPush": true,
+    "identityPolicy": {
+      "allowedEmailRegex": "@corp\\.example\\.com$",
+      "allowedNameRegex": ".+（[A-Za-z0-9_-]+）$"
+    },
+    "sourceAuth": {
+      "usernameEnv": "SOURCE_GIT_USERNAME",
+      "tokenEnv": "SOURCE_GIT_TOKEN"
+    },
+    "targetAuth": {
+      "usernameEnv": "TARGET_GIT_USERNAME",
+      "tokenEnv": "TARGET_GIT_TOKEN"
+    }
+  },
+  "repositories": [
+    {
+      "id": "colink-main",
+      "enabled": false,
+      "sourceUrl": "https://github.com/colink-group/CoLink.git",
+      "targetUrlEnv": "CODEHUB_COLINK_REPO_URL",
+      "stateBranch": "githubfilter-state/colink-main"
+    }
+  ]
+}

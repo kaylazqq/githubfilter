@@ -1,0 +1,81 @@
+name: Rewrite identities and mirror repositories
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_id:
+        description: "任务 ID；留空执行全部 enabled=true 的任务"
+        required: false
+        type: string
+      dry_run:
+        description: "只重写和校验，不推送"
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: githubfilter-dispatch
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || vars.SYNC_ENABLED == 'true'
+    runs-on: [self-hosted, linux]
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        shell: bash
+        env:
+          REQUESTED_ID: ${{ inputs.repository_id }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED_ID}" ]]; then
+            matrix=$(python3 scripts/sync.py --config config/repositories.json --include-disabled --repository-id "${REQUESTED_ID}" --print-matrix)
+          else
+            matrix=$(python3 scripts/sync.py --config config/repositories.json --print-matrix)
+          fi
+          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
+  sync:
+    needs: prepare
+    if: ${{ fromJSON(needs.prepare.outputs.matrix).repository_id[0] != null }}
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: [self-hosted, linux]
+    concurrency:
+      group: githubfilter-${{ matrix.repository_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned git-filter-repo
+        run: python3 -m pip install --user --require-hashes -r requirements-tools.txt
+      - name: Rewrite, validate and mirror
+        env:
+          SOURCE_GIT_USERNAME: ${{ secrets.SOURCE_GIT_USERNAME }}
+          SOURCE_GIT_TOKEN: ${{ secrets.SOURCE_GIT_TOKEN }}
+          TARGET_GIT_USERNAME: ${{ secrets.TARGET_GIT_USERNAME }}
+          TARGET_GIT_TOKEN: ${{ secrets.TARGET_GIT_TOKEN }}
+          CODEHUB_COLINK_REPO_URL: ${{ secrets.CODEHUB_COLINK_REPO_URL }}
+        run: >-
+          python3 scripts/sync.py
+          --config config/repositories.json
+          --repository-id "${{ matrix.repository_id }}"
+          --report-dir reports
+          ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: githubfilter-${{ matrix.repository_id }}-${{ github.run_id }}
+          path: reports/${{ matrix.repository_id }}/
+          if-no-files-found: ignore
+          retention-days: 30

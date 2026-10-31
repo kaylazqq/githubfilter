@@ -1,0 +1,6 @@
+# 格式：规范姓名 <公司邮箱> GitHub 显示名 <GitHub 提交邮箱>
+# 一名提交者存在多个历史邮箱时，每个旧身份写一行。
+#
+# 张三（E12345） <zhangsan@corp.example.com> Zhang San <12345+zhangsan@users.noreply.github.com>
+# 张三（E12345） <zhangsan@corp.example.com> Zhang San <zhangsan@example.net>
+# GitHub 同步机器人（BOT001） <github-sync-bot@corp.example.com> dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
