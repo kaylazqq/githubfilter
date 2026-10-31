@@ -16,6 +16,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          cache-dependency-path: requirements-tools.txt
       - name: Install pinned tooling
         run: python -m pip install --require-hashes -r requirements-tools.txt
       - name: Configure test Git identity
