@@ -47,6 +47,8 @@ class Identity:
 
 @dataclass(frozen=True)
 class RepositoryTask:
+    repository_id: str
+    branch_id: str
     task_id: str
     source_url: str
     source_branch: str
@@ -174,72 +176,120 @@ def load_tasks(
         raise SyncError("defaults 必须是对象，repositories 必须是数组")
 
     tasks: list[RepositoryTask] = []
-    seen: set[str] = set()
+    seen_repositories: set[str] = set()
+    seen_tasks: set[str] = set()
+    seen_writable_refs: dict[tuple[str, str], str] = {}
     for raw in repositories:
         if not isinstance(raw, Mapping):
             raise SyncError("repositories 中的每一项都必须是对象")
-        merged = deep_merge(defaults, raw)
-        task_id = str(merged.get("id", ""))
-        if not ID_RE.fullmatch(task_id):
-            raise SyncError(f"非法任务 id：{task_id!r}")
-        if task_id in seen:
-            raise SyncError(f"重复任务 id：{task_id}")
-        seen.add(task_id)
-        if not bool(merged.get("enabled", False)) and not include_disabled:
-            continue
+        repository = deep_merge(defaults, raw)
+        repository_id = str(repository.get("id", ""))
+        if not ID_RE.fullmatch(repository_id):
+            raise SyncError(f"非法仓库 id：{repository_id!r}")
+        if repository_id in seen_repositories:
+            raise SyncError(f"重复仓库 id：{repository_id}")
+        seen_repositories.add(repository_id)
 
-        source_branch = str(merged.get("sourceBranch", "main"))
-        target_branch = str(merged.get("targetBranch", "main"))
-        state_branch = str(merged.get("stateBranch", f"githubfilter-state/{task_id}"))
-        validate_branch(source_branch, "sourceBranch")
-        validate_branch(target_branch, "targetBranch")
-        validate_branch(state_branch, "stateBranch")
-        if target_branch == state_branch:
-            raise SyncError(f"任务 {task_id} 的 targetBranch 与 stateBranch 不能相同")
+        branches_value = raw.get("branches")
+        legacy = branches_value is None
+        if legacy:
+            branch_entries: list[Mapping[str, Any]] = [{}]
+        else:
+            if not isinstance(branches_value, list) or not branches_value:
+                raise SyncError(f"仓库 {repository_id} 的 branches 必须是非空数组")
+            if not all(isinstance(item, Mapping) for item in branches_value):
+                raise SyncError(f"仓库 {repository_id} 的每个 branches 项都必须是对象")
+            branch_entries = branches_value
 
-        mailmap_value = merged.get("mailmap")
-        if not mailmap_value:
-            raise SyncError(f"任务 {task_id} 缺少 mailmap")
-        mailmap = Path(str(mailmap_value))
-        if not mailmap.is_absolute():
-            mailmap = (config_path.parent / mailmap).resolve()
+        repository_enabled = bool(repository.get("enabled", False))
+        for branch_entry in branch_entries:
+            branch = deep_merge(repository, branch_entry)
+            if legacy:
+                branch_id = repository_id
+                task_id = repository_id
+                task_enabled = repository_enabled
+            else:
+                branch_id = str(branch_entry.get("id", ""))
+                if not ID_RE.fullmatch(branch_id):
+                    raise SyncError(f"仓库 {repository_id} 的非法分支映射 id：{branch_id!r}")
+                task_id = f"{repository_id}.{branch_id}"
+                if not ID_RE.fullmatch(task_id):
+                    raise SyncError(f"组合任务 id 过长或非法：{task_id!r}")
+                task_enabled = repository_enabled and bool(branch_entry.get("enabled", True))
+            if task_id in seen_tasks:
+                raise SyncError(f"重复任务 id：{task_id}")
+            seen_tasks.add(task_id)
+            if not task_enabled and not include_disabled:
+                continue
 
-        lfs = str(merged.get("lfs", "auto")).lower()
-        if lfs not in {"auto", "true", "false"}:
-            raise SyncError(f"任务 {task_id} 的 lfs 只能是 auto、true 或 false")
-        policy = merged.get("identityPolicy", {})
-        if not isinstance(policy, Mapping) or not policy.get("allowedEmailRegex"):
-            raise SyncError(f"任务 {task_id} 缺少 identityPolicy.allowedEmailRegex")
-        allowed_email_regex = str(policy["allowedEmailRegex"])
-        allowed_name_regex = policy.get("allowedNameRegex")
-        try:
-            re.compile(allowed_email_regex)
-            if allowed_name_regex:
-                re.compile(str(allowed_name_regex))
-        except re.error as exc:
-            raise SyncError(f"任务 {task_id} 的身份正则无效：{exc}") from exc
-
-        source_auth = merged.get("sourceAuth", {})
-        target_auth = merged.get("targetAuth", {})
-        if not isinstance(source_auth, Mapping) or not isinstance(target_auth, Mapping):
-            raise SyncError(f"任务 {task_id} 的认证配置必须是对象")
-        tasks.append(
-            RepositoryTask(
-                task_id=task_id,
-                source_url=resolve_url(merged, "source", resolve_environment=resolve_environment),
-                source_branch=source_branch,
-                target_url=resolve_url(merged, "target", resolve_environment=resolve_environment),
-                target_branch=target_branch,
-                state_branch=state_branch,
-                mailmap=mailmap,
-                lfs=lfs,
-                require_atomic_push=bool(merged.get("requireAtomicPush", True)),
-                allowed_email_regex=allowed_email_regex,
-                allowed_name_regex=str(allowed_name_regex) if allowed_name_regex else None,
-                source_auth={str(k): str(v) for k, v in source_auth.items()},
-                target_auth={str(k): str(v) for k, v in target_auth.items()},
+            source_branch = str(branch.get("sourceBranch", "main"))
+            target_branch = str(branch.get("targetBranch", source_branch))
+            default_state = (
+                f"githubfilter-state/{repository_id}"
+                if legacy
+                else f"githubfilter-state/{repository_id}/{branch_id}"
             )
-        )
+            state_branch = str(branch.get("stateBranch", default_state))
+            validate_branch(source_branch, "sourceBranch")
+            validate_branch(target_branch, "targetBranch")
+            validate_branch(state_branch, "stateBranch")
+            if target_branch == state_branch:
+                raise SyncError(f"任务 {task_id} 的 targetBranch 与 stateBranch 不能相同")
+
+            mailmap_value = branch.get("mailmap")
+            if not mailmap_value:
+                raise SyncError(f"任务 {task_id} 缺少 mailmap")
+            mailmap = Path(str(mailmap_value))
+            if not mailmap.is_absolute():
+                mailmap = (config_path.parent / mailmap).resolve()
+
+            lfs = str(branch.get("lfs", "auto")).lower()
+            if lfs not in {"auto", "true", "false"}:
+                raise SyncError(f"任务 {task_id} 的 lfs 只能是 auto、true 或 false")
+            policy = branch.get("identityPolicy", {})
+            if not isinstance(policy, Mapping) or not policy.get("allowedEmailRegex"):
+                raise SyncError(f"任务 {task_id} 缺少 identityPolicy.allowedEmailRegex")
+            allowed_email_regex = str(policy["allowedEmailRegex"])
+            allowed_name_regex = policy.get("allowedNameRegex")
+            try:
+                re.compile(allowed_email_regex)
+                if allowed_name_regex:
+                    re.compile(str(allowed_name_regex))
+            except re.error as exc:
+                raise SyncError(f"任务 {task_id} 的身份正则无效：{exc}") from exc
+
+            source_auth = branch.get("sourceAuth", {})
+            target_auth = branch.get("targetAuth", {})
+            if not isinstance(source_auth, Mapping) or not isinstance(target_auth, Mapping):
+                raise SyncError(f"任务 {task_id} 的认证配置必须是对象")
+            source_url = resolve_url(branch, "source", resolve_environment=resolve_environment)
+            target_url = resolve_url(branch, "target", resolve_environment=resolve_environment)
+            for writable_ref, role in ((target_branch, "目标"), (state_branch, "状态")):
+                key = (target_url, writable_ref)
+                if key in seen_writable_refs:
+                    raise SyncError(
+                        f"任务 {task_id} 的{role}分支与 {seen_writable_refs[key]} 写入同一引用：{writable_ref}"
+                    )
+                seen_writable_refs[key] = task_id
+            tasks.append(
+                RepositoryTask(
+                    repository_id=repository_id,
+                    branch_id=branch_id,
+                    task_id=task_id,
+                    source_url=source_url,
+                    source_branch=source_branch,
+                    target_url=target_url,
+                    target_branch=target_branch,
+                    state_branch=state_branch,
+                    mailmap=mailmap,
+                    lfs=lfs,
+                    require_atomic_push=bool(branch.get("requireAtomicPush", True)),
+                    allowed_email_regex=allowed_email_regex,
+                    allowed_name_regex=str(allowed_name_regex) if allowed_name_regex else None,
+                    source_auth={str(k): str(v) for k, v in source_auth.items()},
+                    target_auth={str(k): str(v) for k, v in target_auth.items()},
+                )
+            )
     return tasks
 
 
@@ -634,6 +684,8 @@ def sync_one(
         metadata = {
             "schemaVersion": 1,
             "taskId": task.task_id,
+            "repositoryId": task.repository_id,
+            "branchId": task.branch_id,
             "sourceUrl": safe_url(task.source_url),
             "sourceBranch": task.source_branch,
             "sourceTip": source_tip,
@@ -701,10 +753,10 @@ def sync_one(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("config/repositories.json"))
-    selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--repository-id", action="append", help="仅执行指定任务；可重复")
-    selection.add_argument("--all-enabled", action="store_true", help="执行所有 enabled=true 的任务")
-    parser.add_argument("--include-disabled", action="store_true", help="仅用于显式 repository-id 或配置校验")
+    parser.add_argument("--task-id", action="append", help="执行指定的仓库.分支任务；可重复")
+    parser.add_argument("--repository-id", action="append", help="执行指定仓库下的全部分支任务；可重复")
+    parser.add_argument("--all-enabled", action="store_true", help="执行所有 enabled=true 的分支任务")
+    parser.add_argument("--include-disabled", action="store_true", help="仅用于显式选择或配置校验")
     parser.add_argument("--print-matrix", action="store_true", help="输出 GitHub Actions matrix JSON")
     parser.add_argument("--validate-config", action="store_true", help="只校验配置")
     parser.add_argument("--dry-run", action="store_true", help="完成克隆、重写和校验，但不推送")
@@ -721,27 +773,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config_path = args.config.resolve()
     try:
-        include_disabled = bool(args.include_disabled or args.repository_id or args.validate_config)
+        include_disabled = bool(
+            args.include_disabled or args.task_id or args.repository_id or args.validate_config
+        )
         tasks = load_tasks(
             config_path,
             include_disabled=include_disabled,
             resolve_environment=not (args.print_matrix or args.validate_config),
         )
-        if args.repository_id:
-            requested = set(args.repository_id)
-            selected = [task for task in tasks if task.task_id in requested]
-            missing = requested - {task.task_id for task in selected}
-            if missing:
-                raise SyncError(f"配置中不存在任务：{', '.join(sorted(missing))}")
-            tasks = selected
+        if args.task_id or args.repository_id:
+            requested_tasks = set(args.task_id or [])
+            requested_repositories = set(args.repository_id or [])
+            available_tasks = {task.task_id for task in tasks}
+            available_repositories = {task.repository_id for task in tasks}
+            missing_tasks = requested_tasks - available_tasks
+            missing_repositories = requested_repositories - available_repositories
+            if missing_tasks:
+                raise SyncError(f"配置中不存在任务：{', '.join(sorted(missing_tasks))}")
+            if missing_repositories:
+                raise SyncError(f"配置中不存在仓库：{', '.join(sorted(missing_repositories))}")
+            tasks = [
+                task
+                for task in tasks
+                if task.task_id in requested_tasks or task.repository_id in requested_repositories
+            ]
         if args.print_matrix:
-            print(json.dumps({"repository_id": [task.task_id for task in tasks]}, separators=(",", ":")))
+            print(json.dumps({"task_id": [task.task_id for task in tasks]}, separators=(",", ":")))
             return 0
         if args.validate_config:
             print(f"配置有效，共 {len(tasks)} 个可执行任务")
             return 0
-        if not args.repository_id and not args.all_enabled:
-            raise SyncError("必须指定 --repository-id、--all-enabled、--print-matrix 或 --validate-config")
+        if not args.task_id and not args.repository_id and not args.all_enabled:
+            raise SyncError(
+                "必须指定 --task-id、--repository-id、--all-enabled、--print-matrix 或 --validate-config"
+            )
         if not tasks:
             log("没有启用的同步任务")
             return 0

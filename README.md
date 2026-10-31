@@ -39,40 +39,71 @@ requirements-tools.txt       带 SHA-256 的 git-filter-repo 版本锁
 
 ## 配置多组仓库
 
-`config/repositories.json` 的 `repositories` 数组中每项是一组完全隔离的同步任务。相同项可复制多份：
+`config/repositories.json` 的 `repositories` 数组中每项是一组源仓和目标仓；组内 `branches` 可以声明任意数量的一对一分支映射：
 
 ```json
 {
-  "id": "colink-main",
+  "id": "colink",
   "enabled": true,
   "sourceUrl": "https://github.com/colink-group/CoLink.git",
   "targetUrlEnv": "CODEHUB_COLINK_REPO_URL",
-  "sourceBranch": "main",
-  "targetBranch": "main",
-  "stateBranch": "githubfilter-state/colink-main",
   "mailmap": "identity.mailmap",
-  "lfs": "auto"
+  "lfs": "auto",
+  "branches": [
+    {
+      "id": "main",
+      "sourceBranch": "main",
+      "targetBranch": "main",
+      "stateBranch": "githubfilter-state/colink/main"
+    },
+    {
+      "id": "release",
+      "sourceBranch": "release/v2",
+      "targetBranch": "github-release-v2",
+      "stateBranch": "githubfilter-state/colink/release"
+    }
+  ]
 }
 ```
 
-字段说明：
+仓库级字段：
 
 | 字段 | 说明 |
 |---|---|
-| `id` | 流水线任务唯一标识，只允许小写字母、数字、点、下划线和连字符 |
-| `enabled` | 是否进入定时流水线矩阵；禁用任务仍可由手工工作流指定执行 |
+| `id` | 仓库组唯一标识，只允许小写字母、数字、点、下划线和连字符 |
+| `enabled` | 仓库组总开关；关闭后不进入定时矩阵，仍可手工指定 |
 | `sourceUrl` / `sourceUrlEnv` | 二选一，源仓地址或保存地址的环境变量名 |
 | `targetUrl` / `targetUrlEnv` | 二选一，目标仓地址或保存地址的环境变量名 |
-| `sourceBranch` | 源分支短名称 |
-| `targetBranch` | 目标代码分支短名称，建议目标仓专用分支 |
-| `stateBranch` | 本任务的审计状态分支，不得与代码分支相同，也不得被其他任务复用 |
 | `mailmap` | 相对 `repositories.json` 所在目录或绝对路径；不同任务可复用或独立配置 |
 | `lfs` | `auto`、`true`、`false`；`auto` 只在检测到 LFS 对象时同步 |
 | `requireAtomicPush` | 默认 `true`；目标 Git 服务不支持原子推送时才可在风险评估后关闭 |
 | `identityPolicy` | 映射后邮箱必需正则，以及可选的姓名必需正则 |
 | `sourceAuth` / `targetAuth` | 指定用户名和令牌所处环境变量的名称，不是凭据值 |
+| `branches` | 非空数组；每项是一组源分支到目标分支的映射 |
 
-顶层 `defaults` 会与每组任务深度合并，所以公共 mailmap、认证变量和策略只需写一次。任务项可以覆盖任何默认值。
+分支映射字段：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 组内唯一标识；最终任务 ID 为 `仓库ID.分支ID`，例如 `colink.main` |
+| `enabled` | 可选的分支开关，默认开启；仓库总开关关闭时仍不会进入定时矩阵 |
+| `sourceBranch` | 原仓分支短名称 |
+| `targetBranch` | 目标仓分支短名称，可以与源分支不同 |
+| `stateBranch` | 可选的审计分支；默认 `githubfilter-state/<仓库ID>/<分支ID>` |
+
+一个源分支需要写入多个目标分支时，声明多个不同 `id`、相同 `sourceBranch` 的映射即可。一个仓库组内的所有映射共享源/目标仓地址；要同步到另一个目标仓，应再增加一个仓库组。
+
+### `stateBranch` 是什么
+
+`stateBranch` 只存在于目标仓，是 githubfilter 的机器审计分支，不是业务代码分支，也不会从原仓拉取。它保存该分支映射的 `commit-map.tsv`、`metadata.json` 和 `identities.tsv`，用于确认：
+
+- 相同源提交在后续运行中仍映射到相同目标 SHA；
+- 目标代码分支没有被人工改写；
+- mailmap 或工具版本变化没有静默重写既有历史。
+
+每个“源分支 → 目标分支”映射必须使用独立状态分支。代码分支与状态分支通过一次原子推送共同更新。
+
+顶层 `defaults`、仓库组和分支项按层级深度合并，所以公共 mailmap、认证变量和策略只需写一次，单个分支仍可覆盖。
 
 ### 同一组凭据管理多个仓
 
@@ -148,12 +179,22 @@ python -m unittest discover -s tests -v
 python scripts/sync.py --config config/repositories.json --validate-config
 ```
 
-指定一组任务进行不推送演练：
+指定整个仓库组的全部分支进行不推送演练：
 
 ```bash
 python scripts/sync.py \
   --config config/repositories.json \
-  --repository-id colink-main \
+  --repository-id colink \
+  --dry-run \
+  --report-dir reports
+```
+
+只执行一个分支映射：
+
+```bash
+python scripts/sync.py \
+  --config config/repositories.json \
+  --task-id colink.main \
   --dry-run \
   --report-dir reports
 ```

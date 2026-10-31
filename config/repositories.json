@@ -1,8 +1,6 @@
 {
   "schemaVersion": 1,
   "defaults": {
-    "sourceBranch": "main",
-    "targetBranch": "main",
     "mailmap": "identity.mailmap",
     "lfs": "auto",
     "requireAtomicPush": true,
@@ -21,11 +19,18 @@
   },
   "repositories": [
     {
-      "id": "colink-main",
+      "id": "colink",
       "enabled": false,
       "sourceUrl": "https://github.com/colink-group/CoLink.git",
       "targetUrlEnv": "CODEHUB_COLINK_REPO_URL",
-      "stateBranch": "githubfilter-state/colink-main"
+      "branches": [
+        {
+          "id": "main",
+          "sourceBranch": "main",
+          "targetBranch": "main",
+          "stateBranch": "githubfilter-state/colink/main"
+        }
+      ]
     }
   ]
 }
