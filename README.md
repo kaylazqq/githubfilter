@@ -24,7 +24,7 @@
 ```text
 config/
   repositories.json          多组源仓/目标仓任务
-  identity.mailmap           正式身份映射（当前等待补充）
+  identity.mailmap           本地正式身份映射（被 Git 忽略）
   identity.mailmap.example   格式示例
 scripts/
   sync.py                    克隆、重写、校验、LFS 与原子推送
@@ -114,12 +114,13 @@ requirements-tools.txt       带 SHA-256 的 git-filter-repo 版本锁
 - `TARGET_GIT_USERNAME`
 - `TARGET_GIT_TOKEN`：只授予指定 CodeHub 目标仓写权限
 - `CODEHUB_COLINK_REPO_URL`：当前 CoLink 任务的目标 URL
+- `IDENTITY_MAILMAP_B64`：正式 `identity.mailmap` 的 Base64 内容，流水线运行时写入临时工作区
 
 需要多套账号时，在任务的 `sourceAuth` / `targetAuth` 中声明另一组环境变量名，并在组织的 self-hosted runner 上通过凭据管理系统注入。不要把 Secret 值写进 JSON。
 
 ## 作者映射
 
-`git-filter-repo --mailmap` 使用 Git mailmap 语法：
+`git-filter-repo --mailmap` 使用 Git mailmap 语法。真实 `config/identity.mailmap` 包含工号和公司邮箱，已被 Git 忽略；公共控制仓只保留 `identity.mailmap.example`：
 
 ```text
 规范姓名（工号） <公司邮箱> GitHub 显示名 <GitHub 提交邮箱>
@@ -135,6 +136,12 @@ requirements-tools.txt       带 SHA-256 的 git-filter-repo 版本锁
 机器人必须映射到专用机器人身份；外部贡献者不得伪装成内部员工。若业务要求保留外部贡献者，应为其定义明确的规范身份和独立允许策略。
 
 修改已经使用过的旧身份映射会改变该提交及所有后代的内部 SHA。系统会把这识别为“历史提交映射漂移”并阻断。需要更正历史映射时，应走一次人工审批的全量历史重建，而不是直接放开定时任务。
+
+在 Windows PowerShell 中生成流水线 Secret 内容：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("config/identity.mailmap"))
+```
 
 先生成待映射清单（包含 Author/Committer 角色和出现次数）：
 
@@ -237,7 +244,7 @@ python scripts/sync.py ... --allow-bootstrap-over-existing-target
 1. 补充 `identity.mailmap` 和真实公司身份正则。
 2. 添加 CodeHub 目标仓并设置目标分支为专用镜像分支。
 3. 在能同时访问 GitHub 与内部 CodeHub 的 Linux self-hosted runner 上安装 Git、Git LFS、Python；Actions Runner 至少为 `v2.327.1`（工作流使用 Node.js 24 action）。
-4. 配置上述 Secrets；不要将 CodeHub 暴露给公网来迁就 GitHub 托管 runner。
+4. 配置上述 Git 凭据 Secrets，并把正式 `identity.mailmap` 做 Base64 编码后保存为 `IDENTITY_MAILMAP_B64`；不要把真实映射提交到公共控制仓。
 5. 先从 Actions 手工执行 `dry_run=true`，下载审计报告核对身份清单。
 6. 再手工执行一次真实同步，并验证目标分支和状态分支。
 7. 把仓库变量 `SYNC_ENABLED` 设为 `true`，开启每小时第 17 分钟的定时同步。
