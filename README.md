@@ -171,6 +171,33 @@ python scripts/collect_identities.py \
 
 要求 Python 3.11+、Git、可选 Git LFS：
 
+Windows 推荐流程：
+
+1. 编辑 `config/repositories.json`，配置仓库组和分支映射。
+2. 编辑 `config/identity.mailmap`，配置提交人映射。
+3. 复制 `config/local.env.example` 为 `config/local.env` 并填写访问凭据；该文件不会被 Git 跟踪。
+4. 先执行不会推送的完整演练：
+
+```powershell
+.\scripts\local-test.ps1 -TaskId colink.main
+```
+
+也可以一次测试某个仓库组的全部分支：
+
+```powershell
+.\scripts\local-test.ps1 -RepositoryId colink
+```
+
+核对 `reports/<任务ID>/` 中的 `identities.tsv`、`metadata.json`、`commit-map.tsv` 后，再显式执行真实推送：
+
+```powershell
+.\scripts\local-test.ps1 -TaskId colink.main -Mode push
+```
+
+若目标代码分支已经存在但尚无状态分支，工具默认拒绝接管；只有确认该目标分支可以被镜像历史覆盖后，首次执行才增加 `-AllowBootstrapOverExistingTarget`。
+
+Linux/macOS 或需要直接调用 Python 时：
+
 ```bash
 python -m venv .venv
 . .venv/bin/activate
