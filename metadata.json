@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "taskId": "githubfilter.main-to-filter",
+  "repositoryId": "githubfilter",
+  "branchId": "main-to-filter",
+  "sourceUrl": "https://github.com/kaylazqq/githubfilter.git",
+  "sourceBranch": "main",
+  "sourceTip": "0a135c62458c8fd896825f25d69991811a5786b3",
+  "targetBranch": "filterv1",
+  "filteredTip": "c3751f825d175dd90e533dd065c95eb313fafb8a",
+  "commitCount": 6,
+  "mailmapSha256": "90add85223eaf90da9874b14f96b66921c1cc981782df1927eb19d6ad942511d",
+  "tools": {
+    "git": "git version 2.33.0",
+    "gitFilterRepo": "a40bce548d2c"
+  },
+  "generatedAt": "2026-11-02T07:05:03.089347+00:00"
+}
