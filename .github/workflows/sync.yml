@@ -65,6 +65,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned git-filter-repo
         run: python3 -m pip install --user --require-hashes -r requirements-tools.txt
+      - name: Materialize private identity map
+        shell: bash
+        env:
+          IDENTITY_MAILMAP_B64: ${{ secrets.IDENTITY_MAILMAP_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${IDENTITY_MAILMAP_B64}" ]]; then
+            echo "::error::IDENTITY_MAILMAP_B64 secret is not configured"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${IDENTITY_MAILMAP_B64}" | base64 --decode > config/identity.mailmap
+          test -s config/identity.mailmap
       - name: Rewrite, validate and mirror
         env:
           SOURCE_GIT_USERNAME: ${{ secrets.SOURCE_GIT_USERNAME }}
