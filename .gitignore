@@ -5,3 +5,4 @@ __pycache__/
 .tmp-download/
 .work/
 reports/
+config/local.env
